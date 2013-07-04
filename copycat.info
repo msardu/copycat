@@ -1,0 +1,9 @@
+name = Copycat
+description = A module that broadcasts or syncs contents with other drupal installations 
+package = "SardegnaIt"
+core = 7.x
+version = 7.x-0.20
+
+files[] = copycat.config
+files[] = copycat.inc
+files[] = copycat.admin

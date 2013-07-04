@@ -1,0 +1,74 @@
+<?php
+function copycat_help($section=''){
+ 	$output='';
+
+  switch($section){
+	case"admin/modules#description":
+			$output=t("Imports back contents from export xml");
+	break;
+  }
+	
+  return $output;
+}
+
+function copycat_perm(){
+return array('access content','access copycat_admin','administer copycat_admin');
+}
+
+/*
+function copycat_admin_menu(){
+	$items['copycat_admin'] = array(
+		'title' => t('Importa allegati da file XML'),
+		'description' => t('Imports back contents from export xml'),		
+		'page callback' => 'drupal_get_form', // assuming that you want to use a form
+		'page arguments' => array('_copycat_admin_upload_form'),
+		'access'=>user_access('access copycat_admin'),
+		'access arguments' => array('access copycat_admin'), // or use hook_perm() to make your own
+		'type' => MENU_NORMAL_ITEM,
+	);
+	return $items;
+}*/
+
+function copycat_admin() {
+  $form = array();
+
+  $form['copycat_maxdisp'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Maximum number of links'),
+    '#default_value' => variable_get('copycat_maxdisp', 3),
+    '#size' => 2,
+    '#maxlength' => 2,
+    '#description' => t("The maximum number of links to display in the block."),
+    '#required' => TRUE,
+  );
+
+  return system_settings_form($form);
+}
+
+function copycat_menu() {
+
+  $items = array();
+
+  $items['admin/settings/copycat'] = array(
+    'title' => 'On this date module settings',
+    'description' => 'Description of your On this date settings page',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('copycat_admin'),
+    'access arguments' => array('administer copycat settings'),
+    'type' => MENU_NORMAL_ITEM,
+   );
+
+  return $items;
+}
+
+function copycat_admin_validate($form, &$form_state) {
+  $maxdisp = $form_state['values']['copycat_maxdisp'];
+  if (!is_numeric($maxdisp)) {
+    form_set_error('copycat_maxdisp', t('You must enter an integer for the maximum number of links.'));
+  }
+  elseif ($maxdisp <= 0) {
+    form_set_error('copycat_maxdisp', t('Maximum number of links must be positive.'));
+  }
+}
+
+?>
