@@ -468,8 +468,6 @@ function copycat_fill_node($data, $nid) {
 
     watchdog('copycat', "Node Saving " . $new_node->title . " presents errors:" . $e->getMessage(), array(), WATCHDOG_NOTICE);
 
-    return false;
-
     //SC: ERRORE QUI!
     $id = db_insert('copycat_list')
                     ->fields(array(
