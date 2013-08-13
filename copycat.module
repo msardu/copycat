@@ -1,6 +1,9 @@
 <?php
 require_once 'copycat.admin';
 require_once 'copycat.config';
+require 'classes/copycatXmlrpcImporter.php';
+require 'classes/copycatTask.php';
+require 'classes/copycatContentHandler.php';
 
 /**
  * Display help and module information
@@ -8,226 +11,142 @@ require_once 'copycat.config';
  * @param arg array that holds the current path as would be returned from arg() function
  * @return help text for the path
  */
-/*
-  function copycat_help($path, $arg) {
-  $output = '';  //declare your output variable
-  switch ($path) {
-  case "admin/help#digital_library":
-  $output = '<p>'.  t("Copycat managment") .'</p>';
-  break;
-  }
-  return $output;
-  } // function copycat help
- */
 
-function copycat_get_node_list() {
-  // this needs a little more work so the parent server knows exactly who is requesting information       
+
+
+function copycat_get_node_list($task) {
   global $settings;
-  global $force_update;
-  /*
-   * Per provare ad aggiornare impostare $page = 1
-   */
-  $page = variable_get('copycat_' . $settings['importer'] . '_current_page', 0);
-  $authenticate = xmlrpc($settings['server'], Array('user.login' => array($settings['user'], $settings['password']),));
+
+  // Login to remote server    
+  try {
+    $task->importer->login();
+  } catch (Exception $e) {
+    watchdog('copycat', '@error', array('@error' => $e->getMessage()), WATCHDOG_CRITICAL);
+  }
 
 
-  if (is_array($authenticate) && $authenticate['user']['name'] === $settings['user'] && $authenticate['user']['status'] == 1) {
-    $options = Array();
-    $options['headers']['Cookie'] = $authenticate['session_name'] . '=' . $authenticate['sessid'];
-    $num_real_big=100000;
-    
-    if($page==0){
-      /* INSERIRE QUI IL METODO PER  */
-      $num_deleted = db_delete('copycat_import')
-        ->condition('nid', null)
-        ->execute();
-      /* RIVEDERE IL SISTEMA */
-      
-      $query = db_select('copycat_import', 'import');
-      $query->join('copycat_list','list', 'list.uuid = import.uuid');
-      $query->fields('import',array('created'))
-      ->condition('list.server_name',$settings['importer'])
-      ->range(0,1);
-       $result=$query->execute();
-      $created=0;
-      while($record = $result->fetchAssoc()) {     
-          $created = $record['created'];
+  if (true) { // Qui il controllo sul task iniziato
+    /* INSERIRE QUI IL METODO PER  */
+    /*
+      $num_deleted = db_delete('copycat_list')
+      ->condition('nid', null)
+      ->execute(); */
+    /* RIVEDERE IL SISTEMA cancellare i contenuti errati creati e farlo per content type */
+
+    if ($task->isListInvalid() || $task->force_update) {
+      db_truncate('copycat_import')->execute();
+
+      try {
+        $nodes = $task->importer->index($settings['source_structure']);
+      } catch (Exception $e) {
+        watchdog('copycat', '@error', array('@error' => $e->getMessage()), WATCHDOG_CRITICAL);
       }
-      $ti=time();
-      $delta=(time()-$created)-$settings['refresh_list_minutes']*60;
-      
-      if($delta>0 || $force_update){
-      db_truncate('copycat_list')->execute();
-      
-      $nodes = xmlrpc($settings['server'], Array('node.index' => Array($page, 'nid,uuid,vid', array('type' => $settings['source_structure']), $num_real_big)), $options);
-      
-    
-    if (xmlrpc_error()) {
-      $error = xmlrpc_error();
-      watchdog('copycat', 'Error getting node list from parent server. Error: @error.', array('@error' => $error->message), WATCHDOG_CRITICAL);
-      return false;
-    } else if(count($nodes) > 0) {      
-      
-      watchdog('copycat', 'Inserting '.count($nodes).' nodes in the list',array(), WATCHDOG_NOTICE);
-      
-      foreach ($nodes as $node) {
-        $values[] = Array(  
-          'nid' => $node['nid'],          
-          'vid' => $node['vid'],
-          'uuid' => $node['uuid'],
-          'created' => REQUEST_TIME,          
-        );
-        }
-          
-      $query = db_insert('copycat_import')->fields(array('nid', 'vid', 'uuid','created'));
-      foreach ($values as $record) {
-          $query->values($record);
-       }
-      try{
-       $query->execute();
-       }catch(Exception $e){
-         watchdog('copycat', $e->getMessage(), array(), WATCHDOG_NOTICE);
-         watchdog('copycat', 'No list was retrieved from parent server',array(), WATCHDOG_CRITICAL);
-         return;
-       }
 
-        
-         watchdog('copycat', $settings['source_structure'].' - Node list of '.count($nodes).' items was successfully retrieved from parent server', array(), WATCHDOG_NOTICE);
-      }else{
-        watchdog('copycat', 'No list was retrieved from parent server',array(), WATCHDOG_CRITICAL);
-        return false;
-      } 
-      } 
-       } 
-      
-      variable_set('copycat_options', $options);
-      
-      $purge = variable_get('copycat_' . $settings['importer'] . '_purge', 0);
-      
-      if($purge){
-        $query=db_select('copycat_list','list');
-        $query->leftJoin('copycat_import','import', 'list.uuid = import.uuid');
-        $query->fields('list',Array('nid'))
-        ->isNull('import.uuid')
-        ->condition('list.server_id', $settings['id']) ;  
-        
-        $result=$query->execute();
-        $num_deleted=$result->rowCount();
-        
-        if($num_deleted>0){
-          
-          while($record = $result->fetchAssoc()) {
-            $nid=$record['nid'];
-            //node_delete($nid);
-            copycat_secure_purge($nid);
-            
-            }
-          
-          watchdog('copycat', '@nodes_deleted nodes no more present in the source server were deleted', array('@nodes_deleted' => $num_deleted), WATCHDOG_NOTICE);
-          
-        }
-        
+      //Creates new list with the nodes to be imported.    
+      try {
+        $nodesInTheList = $task->createList($nodes);
+        watchdog('copycat', $settings['source_structure'] . ' - Node list of ' . $nodesInTheList . ' items was successfully retrieved from parent server', array(), WATCHDOG_NOTICE);
+      } catch (Exception $e) {
+        watchdog('copycat', '@error', array('@error' => $e->getMessage()), WATCHDOG_CRITICAL);
       }
-      copycat_perform_update();
-      
-    } else {
-      watchdog('copycat','Copycat could not login to parent server.', array(), WATCHDOG_CRITICAL);
-    }    
+
+      if ($task->purgeOrphanNodes) {
+        $numDeletedNodes = $task->purge();
+        if ($numDeletedNodes > 0) {
+          watchdog('copycat', '@nodes_deleted nodes no more present in the source server were deleted', array('@nodes_deleted' => $numDeletedNodes), WATCHDOG_NOTICE);
+        }
+      }
+    }
+  }
+
+  copycat_perform_update($task);
 }
 
-function copycat_perform_update() {  
+function copycat_perform_update($task) {
   global $settings;
-  global $copycat_status;
   global $force_update;
-  $options = variable_get('copycat_options', '');
-  
- 
-  // LA query scarica i contenuti presenti in lista escludendo i già importati alla revisone massima, a meno che la variabile force_update non sia true. 
-   $query = db_select('copycat_import', 'import');
-    $query->leftJoin('copycat_list', 'list', 'list.uuid = import.uuid');
-    $query
-    ->fields('import',array('uuid','vid','nid','created'))
-    ->fields('list',array('nid','uuid','original_vid','original_nid','changed'))    
-    ->range(0,$settings['nodes_for_page']);
-    
-    if($force_update == 1){
-      $query->where('list.uuid IS null OR (list.server_id = '.$settings['id'].' AND (import.created > list.changed) OR ((import.uuid = list.uuid) AND (import.vid <> list.original_vid)))');
-    }else{
-      $query->where('list.uuid IS null OR (list.server_id = '.$settings['id'].' AND ((import.uuid = list.uuid) AND (import.vid <> list.original_vid)))');
-    }
-    
-    $sql=(string)$query;
-    $result = $query->execute();
-    
-    $number_of_rows = $result->rowCount();
-    
-    
-    if($number_of_rows == 0){
-      variable_set('copycat_' . $settings['importer'] . '_current_page', 0);
-      variable_set('copycat_' . $settings['importer'] . '_force_update', 0);
-      $priority = variable_get('copycat_' . $settings['importer'] . '_priority', 1);
-      $priority-=10;
-      if ($priority < 0) {
-        $priority = 0;
-      }
-      variable_set('copycat_' . $settings['importer'] . '_priority', $priority);
-    }
-    
-    while($record = $result->fetchAssoc()) {
-     
+
+// LA query scarica i contenuti presenti in lista escludendo i già importati alla revisone massima, a meno che la variabile force_update non sia true. 
+  $query = db_select('copycat_import', 'import');
+  $query->leftJoin('copycat_list', 'list', 'list.uuid = import.uuid');
+  $query
+      ->fields('import', array('uuid', 'vid', 'nid', 'created'))
+      ->fields('list', array('nid', 'uuid', 'original_vid', 'original_nid', 'changed'))
+      ->range(0, $task->getSettings('nodes_for_page'))
+;
+  if ($task->force_update == 1) {
+    $query->where('list.uuid IS null OR (list.server_id = ' . $task->importer->id . ' AND (import.created > list.changed) OR ((import.uuid = list.uuid) AND (import.vid <> list.original_vid)))');
+  }
+  else {
+    $query->where('list.uuid IS null OR (list.server_id = ' . $task->importer->id . ' AND ((import.uuid = list.uuid) AND (import.vid <> list.original_vid)))');
+  }
+
+  $sql = (string) $query;
+  $result = $query->execute();
+
+  $number_of_rows = $result->rowCount();
+
+
+  if ($number_of_rows == 0) { // Task ended, no more nodes to add
+    variable_set('copycat_' . $task->importer->name . '_endtask', time());
+    variable_set('copycat_' . $task->importer->name . '_force_update', 0);    
+  }
+
+  while ($record = $result->fetchAssoc()) {
+
     $intNid = $record['list_nid'];
     $extNid = $record['nid'];
-    
+
     $uuid = $record['list_uuid'];
-    
-    $data = xmlrpc($settings['server'], Array('node.retrieve' => Array($extNid)), $options);
-    if (xmlrpc_error()) {
-      $error = xmlrpc_error();      
-      watchdog('copycat', 'Could not perform XMLRPC request (nid:' . $extNid . '). Error: @error.', array('@error' => $error->message), WATCHDOG_ERROR);
-      try{
+    $data = false;
+    try {
+      $data = $task->importer->node_retrieve($extNid);
+    } catch (Exception $e) {
+      watchdog('copycat', '@error', array('@error' => $e->getMessage()), WATCHDOG_CRITICAL);
+    }
+
+/*
+    try {
+      
       $query = db_insert('copycat_list')
-                    ->fields(array(                        
-                        'server_id' => $settings['id'],
-                        'server_name' => $settings['importer'],
-                        'nid' => 0,
-                        'original_nid' => $record['nid'],
-                        'original_vid' => $record['vid'],
-                        'uuid' => $record['uuid'],
-                        'created' => REQUEST_TIME,
-                        'changed' => REQUEST_TIME, 
-                   ));
-        $id=$query->execute();
-      
-                   }catch(Exception $e){
+          ->fields(array(
+        'server_id' => $settings['id'],
+        'server_name' => $settings['importer'],
+        'nid' => 0,
+        'original_nid' => $record['nid'],
+        'original_vid' => $record['vid'],
+        'uuid' => $record['uuid'],
+        'created' => REQUEST_TIME,
+        'changed' => REQUEST_TIME,
+      ));
+      $id = $query->execute();
+    } catch (Exception $e) {
       watchdog('copycat', '@error.', array('@error' => $e->message), WATCHDOG_ERROR);
-      
-   }
-      
-    } else {
+    }*/
 
-
-      if (is_array($data)) {
-        variable_set('current_node', $data);
-        copycat_fill_node($data, $intNid);
-      } else {
-
-        watchdog('copycat', 'Import of node "' . $extnode['nid'] . '" failed', array(), WATCHDOG_DEBUG);
-$id = db_insert('copycat_list')
-                    ->fields(array(                        
-                        'server_id' => $settings['id'],
-                        'server_name' => $settings['importer'],
-                        'nid' => 0,
-                        'original_nid' => $record['original_nid'],
-                        'original_vid' => $record['original_vid'],
-                        'uuid' => $record['uuid'],
-                        'created' => REQUEST_TIME,
-                        'changed' => REQUEST_TIME, 
-                   ))->execute();
+    if (is_array($data)) {
+      try{
+      copycat_fill_node($data, $intNid, $task);
+      }catch(Exception $e){
         
       }
     }
-   }
-   return;
+    else {/*
+
+      watchdog('copycat', 'Import of node "' . $extnode['nid'] . '" failed', array(), WATCHDOG_DEBUG);
+      $id = db_insert('copycat_list')
+              ->fields(array(
+                'server_id' => $task->importer->id,
+                'server_name' => $task->importer->name,
+                'nid' => 0,
+                'original_nid' => $record['original_nid'],
+                'original_vid' => $record['original_vid'],
+                'uuid' => $record['uuid'],
+                'created' => REQUEST_TIME,
+                'changed' => REQUEST_TIME,
+              ))->execute();*/
+    }
+  }
 }
 
 function copycat_cron() {
@@ -236,296 +155,97 @@ function copycat_cron() {
 
 function copycat_startup() {
   global $copycat_config;
-  global $copycat_status;
   global $force_update;
   global $settings;
-  global $executionTime;
-  global $importedNodes;
-  $importedNodes = 0;
+
   $executionTime = microtime(true);
-  $priorityList = Array();
-  $copycat_status = Array(0,0,0,0);
-  
-  /* Al momento non funziona */
-  $r_default_context = stream_context_get_default ( array
-                    ('http' => array(
-                        'proxy' => "http://proxy.sardegnait.csr:80",
-                        'request_fulluri' => True,
-                    ),
-                )
-            );
-  
-  //legenda: Array (record importati, record aggiornati, record ignorati, record errore)
-  //variable_set("copycat_porti_tpe_priority", 1000);
-  
-  
+  $toProcess = Array("importer" => "", "endtask" => PHP_INT_MAX);
+
   foreach ($copycat_config as $key => $value) {
     // Introduce delle variabili
-    $force_update=variable_get('copycat_' . $key . '_force_update', false);
-    if($force_update === false){$force_update=0; variable_set('copycat_' . $key . '_force_update', 0);}
-    $purge = variable_get('copycat_' . $key . '_purge', false);
-    if($purge === false){$purge=0;variable_set('copycat_' . $key . '_purge', 0);}
-    $disabled=variable_get('copycat_' . $key . '_disabled', false);
-    if($disabled === false){$disabled=0; variable_set('copycat_' . $key . '_disabled', 0);}
-    // N.B: Soluzione temporanea in attesa di creare il moduilo di amministrazione
-    $page=variable_get('copycat_' . $key . '_current_page', 0);
-    if($disabled == 1){continue;}
-    $priority_variable = "copycat_".$key . "_priority";
-    $priority = variable_get($priority_variable, 100);
-    if($page>0){$priority=100000000;}
-    $priorityList = array_merge($priorityList, Array($key => $priority));
-  }
-  
-  array_multisort(array_values($priorityList), SORT_DESC, $priorityList);
-  $toProcessList = array_keys(array_slice($priorityList, 0, 1));
-  $toProcess = $toProcessList[0];
-  if($priorityList[$toProcess]==0){
-    $toProcess=array_rand($priorityList,1);    
+    $force_update = variable_get('copycat_' . $key . '_force_update', false);
+    if ($force_update === false) {
+      $force_update = 0;
+      variable_set('copycat_' . $key . '_force_update', 0);
     }
-    
-  $settings = $copycat_config[$toProcess];
-  
-  
-  copycat_get_node_list();
-  $page=variable_get('copycat_' . $settings['importer'] . '_current_page', 0);
-   
-  $result = db_select('copycat_import', 'table_alias')
-            ->fields('table_alias')            
-            ->execute();
-  
-  $num_of_results= $result->rowCount();
-  
-  $result = db_select('copycat_list', 'table_alias')
-            ->fields('table_alias')
-            ->condition('server_name', $toProcess)
-            ->condition('nid', null)
-            ->execute();
-  $errors = $result->rowCount();
-  
-  
-  
-  
-  $importedNodes = copycat_get_imported_nodes($force_update);
-    
-  
-  if($num_of_results == 0){
-    watchdog('copycat', 'The list for '.$settings['importer'].' is invalid. The importer will be disabled.'   , array(), WATCHDOG_CRITICAL);
-    variable_set('copycat_' . $settings['importer'] . '_disabled', 1);
+    $purge = variable_get('copycat_' . $key . '_purge', false);
+    if ($purge === false) {
+      $purge = 0;
+      variable_set('copycat_' . $key . '_purge', 0);
+    }
+    $disabled = variable_get('copycat_' . $key . '_disabled', false);
+    if ($disabled === false) {
+      $disabled = 0;
+      variable_set('copycat_' . $key . '_disabled', 0);
+    }
+    // N.B: Soluzione temporanea in attesa di creare il moduilo di amministrazione
+
+
+    if ($disabled == 1) {
+      continue;
+    }
+
+    $endtask = variable_get("copycat_" . $key . "_endtask", 0);
+    if ($endtask < $toProcess['endtask'])
+      $toProcess = Array("importer" => $key, "endtask" => $endtask);
+  }
+
+
+  $settings = $copycat_config['' . $toProcess['importer']];
+
+  if (empty($settings))
+    return;
+
+  variable_set('copycat_' . $toProcess['importer'] . '_endtask', -1);
+  $task = new copycatTask(new copycatXmlrpcImporter($settings), $settings);
+  $task->startingTime = microtime();
+  if ($force_update) {
+    $task->force_update = true;
+  }
+  if ($purge) {
+    $task->purgeOrphanNodes = true;
+  }
+
+  copycat_get_node_list($task);
+
+  $status = $task->status();
+
+  if (empty($status)) { //Controllare se funziona ancora
+    watchdog('copycat', 'The list for ' . $task->importer->name . ' is invalid. The importer will be disabled.', array(), WATCHDOG_CRITICAL);
+    variable_set('copycat_' . $task->importer->name . '_disabled', 1);
     return;
   }
-  $percent= floor((($importedNodes /$num_of_results)*100));  
-  watchdog('copycat', $toProcess . ': ' .$percent."% - ". $importedNodes . '/' . $num_of_results . '( '.$errors.' errors)  imported in ' . sprintf('%4d', ((microtime(true) - $executionTime)))  , array(), WATCHDOG_NOTICE);
-  if($percent<100){variable_set('copycat_' . $settings['importer'] . '_current_page', ++$page);}else{variable_set('copycat_' . $settings['importer'] . '_current_page', 0);}
-  
+  if ($toProcess['endtask'] < 0) {
+    watchdog('copycat', $task->importer->name . ': ' . $status['percent'] . "% - " . $status['imported'] . '/' . $status['total'] . '( ' . $status['errors'] . ' errors)  imported in ' . sprintf('%4d', ((microtime(true) - $executionTime))), array(), WATCHDOG_NOTICE);
+  }
 }
 
-function copycat_fill_node($data, $nid) {
-  global $settings;
-  global $importedNodes;
-  $autenticate = variable_get('autenticate', 0);
-  $options = variable_get('copycat_options', '');
-
-  $action_update = false;
-  if ($nid > 0) {
-    $new_node = node_load($nid);
-    $action_update = true;
-  } else {
-    $new_node = new stdClass();
-    $new_node->type = $settings['target_structure'];
-    $new_node->uuid = $data['uuid'];
-    $new_node->created = $data['created'];
-  }
-
-  $new_node->title = $data['title'];
-  $new_node->uid = 1;
-  $new_node->vuuid = $data['vuuid'];
-  $new_node->data = $data['data'];
-  $new_node->changed = $data['changed'];
-  $new_node->language = $data['language'];
-  $new_node->status = $data['status'];
-  $new_node->log = ('Aggiornamento eseguito in automatico dal sistema in data ' . format_date($new_node->changed, $type = 'custom', $format = 'd/m/Y H:i:s', $timezone = NULL, $langcode = NULL));
-
-  foreach (field_info_instances('node', $settings['target_structure']) as $kk) {
-    $machine_name = $kk['field_name'];
-    
-    if (isset($settings['field_map']['' . $machine_name]['source_fieldname'])) {
-      $source_fieldname = $settings['field_map']['' . $machine_name]['source_fieldname'];
-      if ($source_fieldname == 'doNotMap')
-        continue;
-      if ($source_fieldname == 'noSource') {
-        $retrieved_data = Array();
-      } else {
-        $retrieved_data = $data['field_' . $source_fieldname];
-      }
-    } else {
-      $retrieved_data = $data['' . $machine_name];
-    }
-    
-    if (isset($settings['field_map']['' . $machine_name]['data_processor'])) {
-      $dataprocessors = $settings['field_map']['' . $machine_name]['data_processor'];
-      foreach ($dataprocessors as $callback => $params) {
-        if (count($params) > 0) {
-          $inputData = array_merge($retrieved_data, $params);
-        } else {
-          $inputData = $retrieved_data;
-        }
-        $retrieved_data = call_user_func($callback, $inputData);
-      }
-    }
-    
-    $infos = field_info_field($machine_name);
-    $tipo = $infos['type'];
-    switch ($tipo) {
-      case 'image':
-        //To DO:
-        // Controllare che il file immagine non sia già stato scaricato e quindi non sia già presente sul sistema
-        $imgArray=Array();
-        if (empty($retrieved_data)) break;
-        $imgdatas=current($retrieved_data);
-        foreach($imgdatas as $imgdata){
-        $newImage=copycat_retrieve_image($machine_name,$imgdata, $new_node);
-        array_push($imgArray,$newImage);
-        }
-        
-             $new_node->{'' . $machine_name}= Array(LANGUAGE_NONE => $imgArray);
-         
-        break;
-      case 'taxonomy_term_reference':
-        if(empty($retrieved_data))break;
-        $lang=$retrieved_data['params']['lang'];
-        $new_node->{'' . $machine_name} = Array(''.$lang => Array());
-        
-        $baseArray=&$new_node->{'' . $machine_name}[''.$lang];
-        foreach (current($retrieved_data) as $term){
-        
-        $tid = loadTaxonomy($term['tid']);
-        if ($tid) {
-        //  $new_node->{'' . $machine_name} = Array(LANGUAGE_NONE => Array(Array('tid' => $tid)));
-          array_push($baseArray,Array('tid' => $tid));
-         
-        }
-        }
-        break;
-      default:
-
-        $new_node->{'' . $machine_name} = $retrieved_data;
-
-        break;
-    }
-  }
-
+function copycat_fill_node($data, $nid, $task) {
 
   try {
-    //$status = drupal_write_record('node',$new_node);
-   $new_nid=node_save($new_node);
+    $handler = new copycatContentHandler($nid, $data, $task);
+    $new_node = $handler->getNode();    
   } catch (Exception $e) {
-    
-    /*
-    $recovery_node = new stdClass();
-    $recovery_node->title=$new_node->title;
-    $new_nid=node_save($recovery_node);
-    
-    foreach($new_node  as $key=>$field){
-      $recovery_node->{$key}=$field;
-      try{
-      field_attach_update('node', $recovery_node);}catch(Exception $e){
-        watchdog('actions', 'Error updating node '.$node->title,array()." - ".$e->getMessage(), WATCHDOG_NOTICE);
-      }
-    }
-    */
-    
+    throw new Exception("Node " . $new_node->nid . " presents errors.".$e->getMessage());
+  }
+
+  $new_nid = 0;
+
+  try {
+    node_save($new_node);
+  } catch (Exception $e) {
+    $handler->errorRegister();
     watchdog('copycat', $e->getMessage(), array(), WATCHDOG_NOTICE);
     watchdog('copycat', "Node " . $new_node->title . " presents errors.", array(), WATCHDOG_NOTICE);
-    
-    $id = db_insert('copycat_list')
-                    ->fields(array(                        
-                        'server_id' => $settings['id'],
-                        'server_name' => $settings['importer'],
-                        'nid' => null,
-                        'original_nid' => $data['nid'],
-                        'original_vid' => $data['vid'],
-                        'uuid' => $data['uuid'],
-                        'created' => REQUEST_TIME,
-                        'changed' => REQUEST_TIME,
-                    ))->execute();
-    
     unset($new_node);
-    
     return false;
   }
 
-  $importedNodes++;
-  if ($action_update) {
-    $id = db_update('copycat_list')
-            ->fields(array(
-                'original_vid' => $data['vid'],
-                'changed' => REQUEST_TIME,
-            ))
-            ->condition('uuid', $new_node->uuid)
-            ->execute();
-    // ATTENZIONE: SE SI ELIMINA QUESTA QUERY E IL NOME VIENE AGGIORNATO DOPO LO SCARICAMENTO DELLA LISTA LA PROCEDURA NON TERMINERA' MAI
-      $id = db_update('copycat_import')
-            ->fields(array(
-                'vid' => $data['vid'],                
-            ))
-            ->condition('uuid', $new_node->uuid)
-            ->execute();
-  } else {
-    $id = db_insert('copycat_list')
-                    ->fields(array(                        
-                        'server_id' => $settings['id'],
-                        'server_name' => $settings['importer'],
-                        'nid' => $new_node->nid,
-                        'original_nid' => $data['nid'],
-                        'original_vid' => $data['vid'],
-                        'uuid' => $new_node->uuid,
-                        'created' => REQUEST_TIME,
-                        'changed' => REQUEST_TIME,
-                    ))->execute();    
-  }
+  $handler->updateRegister($new_node->nid, $new_node->uuid);
+
   unset($new_node);
 
   return true;
-}
-
-function loadTaxonomy($tid) {
-  global $settings;
-
-  $taxonomy = xmlrpc($settings['server'], Array('taxonomy_term.retrieve' => Array($tid)));
-
-  if (!$taxonomy) {
-    return false;
-  }
-
-  $vocab = taxonomy_vocabulary_machine_name_load($taxonomy['vocabulary_machine_name']);
-
-  if (!$vocab) {
-    $vocabulary = new stdClass();
-    $vocabulary->name = $taxonomy['vocabulary_machine_name'];
-    $vocabulary->machine_name = $taxonomy['vocabulary_machine_name'];
-    $vocabulary->hierarchy = 1;
-    $vid = taxonomy_vocabulary_save($vocabulary);
-  } else {
-    $vid = $vocab->vid;
-  }
-
-  $result = db_query("SELECT * FROM {taxonomy_term_data} n WHERE uuid = :uuid", Array(':uuid' => $taxonomy['uuid']));
-
-  if ($result->rowCount() > 0) {
-    $record = $result->fetchObject();
-    $target_tid = $record->tid;
-  } else {
-    $term = new stdClass();
-    $term->vid = $vid;
-    $term->name = $taxonomy['name'];
-    $term->uuid = $taxonomy['uuid'];
-    //TODO: Implement hyerarchy of taxonomy terms
-    //$tax->parent: (optional) The parent term(s) for this term. This can be a single term ID or an array of term IDs. A value of 0 means this term does not have any parents. When omitting this variable during an update, the existing hierarchy for the term remains unchanged.
-    $term->vocabulary_machine_name = $taxonomy['vocabulary_machine_name'];
-    $target_tid = taxonomy_term_save($term);
-  }
-
-  return $target_tid;
 }
 
 /*
@@ -534,127 +254,7 @@ function loadTaxonomy($tid) {
 
 function copycat_node_delete($node) {
   db_delete('copycat_list')
-          ->condition('uuid', $node->uuid)
-          ->execute();  
-  
+      ->condition('uuid', $node->uuid)
+      ->execute();
 }
-
-function copycat_retrieve_image($machine_name,$imgdata){
-  global $settings;
-  $options = variable_get('copycat_options', '');
-  if ($options) {
-          if (empty($imgdata))
-            return false;
-          
-          $fid = $imgdata['fid'];
-          $result = db_query("SELECT * FROM {file_managed} f WHERE uuid = ':uuid'", Array(':uuid' => $imgdata['uuid']));
-          if($result->rowCount()>0){
-            $newfile = $result->fetchObject();            
-          }else{          
-          $file = xmlrpc($settings['server'], Array('file.retrieve' => Array(Array("fid" => $fid), Array("file_contents" => 'true'), Array("image_styles" => 'true'))), $options);
-          if (xmlrpc_error()) {
-            $error = xmlrpc_error();
-            watchdog('copycat', 'Could not perform XMLRPC request. Error: @error.', array('@error' => (String) $error), WATCHDOG_CRITICAL);
-          } else {
-            
-            $filetype = explode('.', $file['filename']);
-            if (!file_exists($settings['target_image_dir'])) {
-              mkdir($settings['target_image_dir'], '0777', 1);
-            };
-            $filepath = $settings['target_image_dir'] . '/' . $file['filename'];
-            $file_data = base64_decode($file['file']);
-            try {
-              $newfile = file_save_data($file_data, $filepath, FILE_EXISTS_RENAME);
-            } catch (Exception $e) {
-              watchdog('copycat', $e->getMessage(), array(), WATCHDOG_NOTICE);
-              watchdog('copycat', "Image " . $filepath . " was not imported", array(), WATCHDOG_NOTICE);
-              return false;
-            }
-          }
-}         
-          if(!$newfile) return false;
-          $newImage = Array();
-          
-          $newImage['fid'] = $newfile->fid;
-          $newImage['uri'] = $newfile->uri;
-          $newImage['filesize'] = $newfile->filesize;
-          
-          $newImage['alt'] = $imgdata['alt'];
-          $newImage['title'] = $imgdata['title'];
-          $newImage['width'] = $imgdata['width'];
-          $newImage['height'] = $imgdata['height'];
-          $newImage['uid'] = 1;
-          $newImage['filename'] = $imgdata['filename'];
-          $newImage['filemime'] = $imgdata['filemime'];
-          $newImage['status'] = $imgdata['status'];
-          $newImage['timestamp'] = $imgdata['timestamp'];
-          $newImage['type'] = $imgdata['type'];
-          $newImage['uuid'] = $imgdata['uuid'];
-          $newImage['image_dimensions'] = Array('width' => $imgdata['width'], 'height' => $imgdata['height']);
-          $newImage['display'] = 1;
-          if(!empty($imgdata['field_license'])){$newImage['field_license'] = $imgdata['field_license'];}
-          if(!empty($imgdata['rdf_mapping'])){$newImage['rdf_mapping'] = $imgdata['rdf_mapping'];}
-          
-          return $newImage;
-        }
-        
-        return false;
-  
-}
-
-
-function copycat_secure_purge($nid){
-  
-  $types=node_type_get_names();
-  foreach ($types as $type=>$value){
-    $data=field_info_instances("node",$type);
-    foreach ($data as $field){
-      $widtype=$field['widget']['type'];
-      $name=$field['field_name'];
-      if(strpos($widtype,'node_reference')=== false)continue;
-      try{
-      $result = db_select('field_data_'.$name, 'reference')
-            ->fields('reference')
-            ->condition($name.'_nid', $nid)
-            ->execute();}catch(Exception $e){             
-            }
-            
-  $is_referenced = $result->rowCount();
-  if($is_referenced>0) {
-    return false;
-    }
-    }
-    
-  }
-  
-}
-
-function copycat_get_imported_nodes($force_update){
-  global $settings;
-  if($force_update){
-   $query = db_select('copycat_import', 'import');            
-  
-            $query->leftJoin('copycat_list', 'list', 'list.uuid = import.uuid');
-            
-            $query->fields('import');
-            
-            $query->where('import.created <= list.changed AND list.uuid');
-            $sql=(string) $query;
-            $result=$query->execute();
-            
-            
-            
-            }else{
-              
-            $result = db_select('copycat_list', 'table_alias')
-            ->fields('table_alias')
-            ->condition('server_id',$settings['id'])    
-            ->execute();
-            
-            }
-            
-    
-            return($result->rowCount());
-  
-  }
 

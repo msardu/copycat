@@ -13,7 +13,7 @@ function copycat_schema() {
               'description' => 'The nid of the node in the source server.',
               'type' => 'int',
               'unsigned' => TRUE,
-              'not null' => TRUE),
+              'not null' => FALSE),
           'server_id' => array(
               'description' => 'Id of the of the source server.',
               'type' => 'int',

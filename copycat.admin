@@ -1,18 +1,25 @@
 <?php
-function copycat_help($section=''){
+function copycat_help($section){
  	$output='';
 
   switch($section){
-	case"admin/modules#description":
-			$output=t("Imports back contents from export xml");
-	break;
+	case 'admin/help#copycat':
+   $output = '';
+   $output .= '<h3>' . t('About') . '</h3>';
+   $output .= '<p>' . t("Copycat - @2013 SARDEGNAIT") . '<p>';
+return $output;  
   }
 	
   return $output;
 }
 
-function copycat_perm(){
-return array('access content','access copycat_admin','administer copycat_admin');
+function copycat_permission(){
+return array(
+    'administer copycat' => array(
+      'title' => t('Administer copycat'),
+      'description' => t('Perform administration tasks for copycat module.'),
+    ),
+  );
 }
 
 /*
@@ -29,29 +36,67 @@ function copycat_admin_menu(){
 	return $items;
 }*/
 
+function isEnabled($name){
+ $base_path = drupal_get_path('module', 'copycat') . '/';
+ $isDisabled=variable_get('copycat_' . $name . '_disabled', 0);
+  if($isDisabled == 0){
+    return '<img src="/'.$base_path.'img/enabled.png" alt="The importer '.$name.' is enabled" title="The importer '.$name.' is enabled"/>';
+  }else{   
+    return '<img src="/'.$base_path.'img/disabled.png" alt="The importer '.$name.' is disabled" title="The importer '.$name.' is disabled"/>';
+  }  
+}
+
 function copycat_admin() {
-  $form = array();
+ $rows=Array();
+ 
+ $i=0;
+ foreach($GLOBALS['copycat_config'] as $importer){
+   $i++;
+   $endtask = variable_get("copycat_" . $importer['importer'] . "_endtask", 0);
+   
+   if ($endtask>0){$lastExec=date('d-m-Y h:i',$endtask);
+    }else if($endtask==-1){
+                $lastExec=t('running');
+    }else{$lastExec=t('never');}
+  $rows[]=
+      Array(
+      isEnabled($importer['importer']),
+        $importer['importer'],
+        $importer['server'],
+        $importer['source_structure']." => ".$importer['target_structure'],
+        $importer['nodes_for_page'],
+        $importer['target_image_dir'],
+        $lastExec,
+        '<a href="#">'.t('Modifica').'</a>','<a href="#">'.t('Disabilita').'</a>','<a href="#">'.t('Elimina').'</a>');
+ }
+ 
+ $header = array();
+  $header[] = t('Status');
+  $header[] = t('Name');
+  $header[] = t('Endpoint');
+  $header[] = t('Content type');
+  $header[] = t('Nodes per page');
+  $header[] = t('Image directory');
+  $header[] = t('Last execution');  
+  $header[] = array('data' => t('Operations'), 'colspan' => 3);
 
-  $form['copycat_maxdisp'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Maximum number of links'),
-    '#default_value' => variable_get('copycat_maxdisp', 3),
-    '#size' => 2,
-    '#maxlength' => 2,
-    '#description' => t("The maximum number of links to display in the block."),
-    '#required' => TRUE,
+  return array(
+    '#theme' => 'table',
+    '#header' => $header,
+    '#rows' => $rows,
+    '#empty' => t('There are no importers defined yet.'),
   );
-
-  return system_settings_form($form);
+ 
+  
 }
 
 function copycat_menu() {
 
   $items = array();
 
-  $items['admin/settings/copycat'] = array(
-    'title' => 'On this date module settings',
-    'description' => 'Description of your On this date settings page',
+  $items['admin/config/copycat'] = array(
+    'title' => 'Copycat',
+    'description' => 'Description of copycat settings page',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('copycat_admin'),
     'access arguments' => array('administer copycat settings'),
@@ -60,7 +105,7 @@ function copycat_menu() {
 
   return $items;
 }
-
+/*
 function copycat_admin_validate($form, &$form_state) {
   $maxdisp = $form_state['values']['copycat_maxdisp'];
   if (!is_numeric($maxdisp)) {
@@ -69,6 +114,6 @@ function copycat_admin_validate($form, &$form_state) {
   elseif ($maxdisp <= 0) {
     form_set_error('copycat_maxdisp', t('Maximum number of links must be positive.'));
   }
-}
+}*/
 
 ?>
