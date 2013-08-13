@@ -155,6 +155,12 @@ class copycatContentHandler {
       };
       $filepath = $imgdir . '/' . $file['filename'];
       $file_data = base64_decode($file['file']);
+      if(strlen($file_data)== 0){
+        $base_path = drupal_get_path('module', 'copycat') . '/';
+        $path="http://".$_SERVER['SERVER_NAME']."/".$base_path."img/copycat_error.jpg";
+        $error_image= drupal_http_request($path);        
+        $file_data=$error_image->data;        
+      }
       try {
         $drupal_file = file_save_data($file_data, $filepath, FILE_EXISTS_RENAME);
       } catch (Exception $e) {
@@ -285,9 +291,9 @@ class copycatContentHandler {
       if ($tid) {
         $i++;
           if(is_array($field)){
-          $field[$i]->set($tid);
+          $field[$i]->set(Array($tid));
           }else{
-            $field->set($tid);
+            $field->set(Array($tid));
           }
       }
     }

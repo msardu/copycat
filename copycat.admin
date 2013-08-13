@@ -56,7 +56,8 @@ function copycat_admin() {
    
    if ($endtask>0){$lastExec=date('d-m-Y h:i',$endtask);
     }else if($endtask==-1){
-                $lastExec=t('running');
+      $isDisabled=variable_get('copycat_' . $importer['importer'] . '_disabled', 0);
+                if($isDisabled==0){$lastExec=t('running');}else{$lastExec=t('paused');}
     }else{$lastExec=t('never');}
   $rows[]=
       Array(
@@ -67,7 +68,7 @@ function copycat_admin() {
         $importer['nodes_for_page'],
         $importer['target_image_dir'],
         $lastExec,
-        '<a href="#">'.t('Modifica').'</a>','<a href="#">'.t('Disabilita').'</a>','<a href="#">'.t('Elimina').'</a>');
+        '<a href="'.$importer['importer'].'/edit">'.t('Edit').'</a>','<a href="#">'.t('Disable').'</a>','<a href="#">'.t('Delete').'</a>');
  }
  
  $header = array();

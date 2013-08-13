@@ -206,6 +206,32 @@ public function getImagesDir(){
   return $this->target_image_dir;  
 }
 
+public function fixNodeReferences(){
+  $field_name='field_ref_porto';
+  $query = new EntityFieldQuery();
+$query->entityCondition('entity_type', 'node')
+  ->entityCondition('bundle', $this->getSettings('target_strucure'))
+  ->fieldCondition($field_name, 'nid', 'NULL', '!=');
+$result = $query->execute();
+ 
+if (isset($result['node'])) {
+  $references = $result['node'];
+ 
+  // At first we need to get field's id. If you already know field id, you can ommit this step
+  // Get all fields attached to a given node type
+  $fields = field_info_instances('node', $this->getSettings('target_strucure'));
+ 
+  // Get id of body field
+  $field_id = $fields[$field_name]['field_id'];
+ 
+  // Attach a field of selected id only to get value for it
+  field_attach_load('node', $references, FIELD_LOAD_CURRENT, array('field_id' => $field_id));
+ 
+  // Get values of our node field
+  $output = field_get_items('node', $node, $field_name);
+}
+  
+}
 
 }
 ?>

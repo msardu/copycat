@@ -63,9 +63,7 @@ function copycat_get_node_list($task) {
 }
 
 function copycat_perform_update($task) {
-  global $settings;
-  global $force_update;
-
+ 
 // LA query scarica i contenuti presenti in lista escludendo i già importati alla revisone massima, a meno che la variabile force_update non sia true. 
   $query = db_select('copycat_import', 'import');
   $query->leftJoin('copycat_list', 'list', 'list.uuid = import.uuid');
@@ -89,7 +87,8 @@ function copycat_perform_update($task) {
 
   if ($number_of_rows == 0) { // Task ended, no more nodes to add
     variable_set('copycat_' . $task->importer->name . '_endtask', time());
-    variable_set('copycat_' . $task->importer->name . '_force_update', 0);    
+    variable_set('copycat_' . $task->importer->name . '_force_update', 0);
+    $task->fixNodeReferences();
   }
 
   while ($record = $result->fetchAssoc()) {
@@ -128,7 +127,7 @@ function copycat_perform_update($task) {
       try{
       copycat_fill_node($data, $intNid, $task);
       }catch(Exception $e){
-        
+        watchdog('copycat', 'Error @error', array('error'=>$e->getMessage()), WATCHDOG_CRITICAL);
       }
     }
     else {/*
@@ -226,7 +225,7 @@ function copycat_fill_node($data, $nid, $task) {
     $handler = new copycatContentHandler($nid, $data, $task);
     $new_node = $handler->getNode();    
   } catch (Exception $e) {
-    throw new Exception("Node " . $new_node->nid . " presents errors.".$e->getMessage());
+    throw new Exception("Node presents errors.".$e->getMessage());
   }
 
   $new_nid = 0;
